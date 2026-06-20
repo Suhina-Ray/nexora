@@ -152,6 +152,7 @@ export default function FinancialCrimeDashboard() {
   const introStartRef = useRef(null);
   const introDoneRef = useRef(false);
   const particlesRef = useRef([]);
+  const mouseScreenRef = useRef({ x: -9999, y: -9999 });
 
   useEffect(() => { selectedIdRef.current = selectedId; }, [selectedId]);
   useEffect(() => { traceFromRef.current = traceFrom; }, [traceFrom]);
@@ -330,10 +331,14 @@ export default function FinancialCrimeDashboard() {
       hoveredIdRef.current = n ? n.id : null;
       setHoveredNode(n || null);
       canvas.style.cursor = traceModeRef.current ? 'crosshair' : (n ? 'pointer' : 'grab');
+      const rect = canvas.getBoundingClientRect();
+      mouseScreenRef.current = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     }
+    function handleLeave() { mouseScreenRef.current = { x: -9999, y: -9999 }; }
 
     canvas.addEventListener('click', handleClick);
     canvas.addEventListener('mousemove', handleMove);
+    canvas.addEventListener('mouseleave', handleLeave);
 
     function drawArrow(ctx, x1, y1, x2, y2, targetR, lw, alpha, color) {
       const angle = Math.atan2(y2 - y1, x2 - x1);
@@ -360,18 +365,61 @@ export default function FinancialCrimeDashboard() {
       ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = '#060a12'; ctx.fillRect(0, 0, w, h);
 
+      // Mouse-reactive glowing grid — drawn in screen space so it stays fixed under the cursor regardless of pan/zoom.
+      {
+        const mx = mouseScreenRef.current.x, my = mouseScreenRef.current.y;
+        const cell = 42;
+        const glowRadius = 220;
+        const gx0 = Math.floor((mx - glowRadius) / cell) * cell;
+        const gy0 = Math.floor((my - glowRadius) / cell) * cell;
+        const gx1 = Math.ceil((mx + glowRadius) / cell) * cell;
+        const gy1 = Math.ceil((my + glowRadius) / cell) * cell;
+
+        ctx.lineWidth = 1;
+        // Base faint grid across the whole canvas.
+        ctx.strokeStyle = 'rgba(148,163,184,0.045)';
+        ctx.beginPath();
+        for (let gx = 0; gx <= w + cell; gx += cell) { ctx.moveTo(gx, 0); ctx.lineTo(gx, h); }
+        for (let gy = 0; gy <= h + cell; gy += cell) { ctx.moveTo(0, gy); ctx.lineTo(w, gy); }
+        ctx.stroke();
+
+        // Brightened lines + intersection glow near the cursor.
+        if (mx > -1000) {
+          for (let gx = gx0; gx <= gx1; gx += cell) {
+            const dx = Math.abs(gx - mx);
+            if (dx > glowRadius) continue;
+            const a = Math.max(0, 1 - dx / glowRadius) * 0.5;
+            ctx.strokeStyle = `rgba(240,180,41,${a})`;
+            ctx.beginPath(); ctx.moveTo(gx, Math.max(0, my - glowRadius)); ctx.lineTo(gx, Math.min(h, my + glowRadius)); ctx.stroke();
+          }
+          for (let gy = gy0; gy <= gy1; gy += cell) {
+            const dy = Math.abs(gy - my);
+            if (dy > glowRadius) continue;
+            const a = Math.max(0, 1 - dy / glowRadius) * 0.5;
+            ctx.strokeStyle = `rgba(240,180,41,${a})`;
+            ctx.beginPath(); ctx.moveTo(Math.max(0, mx - glowRadius), gy); ctx.lineTo(Math.min(w, mx + glowRadius), gy); ctx.stroke();
+          }
+          for (let gx = gx0; gx <= gx1; gx += cell) {
+            for (let gy = gy0; gy <= gy1; gy += cell) {
+              const dist = Math.hypot(gx - mx, gy - my);
+              if (dist > glowRadius) continue;
+              const a = Math.max(0, 1 - dist / glowRadius);
+              ctx.beginPath(); ctx.arc(gx, gy, 1.4 + a * 1.4, 0, Math.PI * 2);
+              ctx.fillStyle = `rgba(255,222,140,${a * 0.85})`;
+              ctx.fill();
+            }
+          }
+          // Soft ambient halo following the cursor.
+          const halo = ctx.createRadialGradient(mx, my, 0, mx, my, glowRadius);
+          halo.addColorStop(0, 'rgba(240,180,41,0.06)');
+          halo.addColorStop(1, 'rgba(240,180,41,0)');
+          ctx.fillStyle = halo;
+          ctx.beginPath(); ctx.arc(mx, my, glowRadius, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+
       ctx.save();
       ctx.translate(t.x, t.y); ctx.scale(t.k, t.k);
-
-      // Dot grid
-      ctx.fillStyle = 'rgba(148,163,184,0.05)';
-      const gs = 44;
-      const x0 = Math.floor((-t.x / t.k) / gs) * gs;
-      const y0 = Math.floor((-t.y / t.k) / gs) * gs;
-      for (let gx = x0; gx < x0 + w / t.k + gs; gx += gs)
-        for (let gy = y0; gy < y0 + h / t.k + gs; gy += gs) {
-          ctx.beginPath(); ctx.arc(gx, gy, 0.8, 0, Math.PI * 2); ctx.fill();
-        }
 
       // Radar sweep
       if (ctx.createConicGradient && nodes.length) {
@@ -531,6 +579,7 @@ export default function FinancialCrimeDashboard() {
       ro.disconnect();
       canvas.removeEventListener('click', handleClick);
       canvas.removeEventListener('mousemove', handleMove);
+      canvas.removeEventListener('mouseleave', handleLeave);
       cancelAnimationFrame(rafRef.current);
     };
   }, [accounts, transactions, filterMode]);
