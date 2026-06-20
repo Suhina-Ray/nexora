@@ -4,6 +4,7 @@ import {
   Users, ShieldAlert, DollarSign, Loader2, RefreshCw, X,
   AlertTriangle, ArrowUpRight, ArrowDownLeft, Radar, Activity,
   Search, Filter, Bell, TrendingUp, Eye, Zap, Lock, ChevronRight,
+  List, ArrowUpDown, ArrowUp, ArrowDown,
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:5000';
@@ -67,6 +68,9 @@ export default function FinancialCrimeDashboard() {
   const [showAlerts, setShowAlerts] = useState(false);
   const [alertCount, setAlertCount] = useState(0);
   const [activeTab, setActiveTab] = useState('graph');
+  const [ledgerSearch, setLedgerSearch] = useState('');
+  const [ledgerSort, setLedgerSort] = useState({ key: 'timestamp', dir: 'desc' });
+  const [ledgerRiskFilter, setLedgerRiskFilter] = useState('all');
 
   const containerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -379,6 +383,44 @@ export default function FinancialCrimeDashboard() {
     [...accounts].sort((a, b) => b.risk_score - a.risk_score).slice(0, 10),
     [accounts]);
 
+  const ledgerTxns = useMemo(() => {
+    const q = ledgerSearch.trim().toLowerCase();
+    let rows = transactions.map(t => {
+      const fromAcc = accountsById.get(t.from);
+      const toAcc = accountsById.get(t.to);
+      const maxRisk = Math.max(fromAcc?.risk_score ?? 0, toAcc?.risk_score ?? 0);
+      return { ...t, fromAcc, toAcc, maxRisk };
+    });
+
+    if (ledgerRiskFilter === 'high') rows = rows.filter(t => t.maxRisk > HIGH_RISK_THRESHOLD);
+
+    if (q) {
+      rows = rows.filter(t =>
+        t.id.toLowerCase().includes(q) ||
+        t.from.toLowerCase().includes(q) ||
+        t.to.toLowerCase().includes(q) ||
+        (t.fromAcc?.name || '').toLowerCase().includes(q) ||
+        (t.toAcc?.name || '').toLowerCase().includes(q)
+      );
+    }
+
+    const { key, dir } = ledgerSort;
+    const mult = dir === 'asc' ? 1 : -1;
+    rows.sort((a, b) => {
+      if (key === 'timestamp') return mult * (new Date(a.timestamp) - new Date(b.timestamp));
+      if (key === 'amount') return mult * (a.amount - b.amount);
+      if (key === 'risk') return mult * (a.maxRisk - b.maxRisk);
+      return 0;
+    });
+    return rows;
+  }, [transactions, accountsById, ledgerSearch, ledgerRiskFilter, ledgerSort]);
+
+  const toggleLedgerSort = (key) => {
+    setLedgerSort(prev => prev.key === key
+      ? { key, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { key, dir: 'desc' });
+  };
+
   return (
     <div style={{
       height: '100vh', width: '100%', display: 'flex', flexDirection: 'column',
@@ -529,14 +571,14 @@ export default function FinancialCrimeDashboard() {
 
       {/* TABS + MAIN */}
       <div style={{ display: 'flex', borderBottom: '1px solid #1c2330', background: '#0c1119', flexShrink: 0 }}>
-        {['graph', 'leaderboard'].map(tab => (
+        {['graph', 'leaderboard', 'ledger'].map(tab => (
           <button key={tab} className="tab-btn" onClick={() => setActiveTab(tab)}
             style={{
               color: activeTab === tab ? '#f0b429' : '#475569',
               borderBottom: activeTab === tab ? '2px solid #f0b429' : '2px solid transparent',
               textTransform: 'uppercase', letterSpacing: '0.12em'
             }}>
-            {tab === 'graph' ? '⬡ Network Graph' : '⚠ Risk Leaderboard'}
+            {tab === 'graph' ? '⬡ Network Graph' : tab === 'leaderboard' ? '⚠ Risk Leaderboard' : '☰ Transaction Ledger'}
           </button>
         ))}
       </div>
@@ -668,6 +710,101 @@ export default function FinancialCrimeDashboard() {
           </div>
         )}
 
+        {/* LEDGER VIEW */}
+        {activeTab === 'ledger' && (
+          <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column' }}>
+            {/* Controls */}
+            <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ position: 'relative', flex: 1, minWidth: 220, maxWidth: 360 }}>
+                <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: '#475569' }} />
+                <input
+                  value={ledgerSearch}
+                  onChange={e => setLedgerSearch(e.target.value)}
+                  placeholder="Search by account, name, or txn ID..."
+                  style={{
+                    width: '100%', background: '#0c1119', border: '1px solid #1c2330',
+                    borderRadius: 6, padding: '8px 10px 8px 30px', color: '#e6edf3',
+                    fontSize: 12, fontFamily: 'inherit', outline: 'none', boxSizing: 'border-box'
+                  }}
+                />
+              </div>
+
+              <button onClick={() => setLedgerRiskFilter(ledgerRiskFilter === 'all' ? 'high' : 'all')}
+                style={{
+                  background: ledgerRiskFilter === 'high' ? 'rgba(239,68,68,0.15)' : 'none',
+                  border: `1px solid ${ledgerRiskFilter === 'high' ? '#ef444466' : '#1c2330'}`,
+                  borderRadius: 6, padding: '7px 12px', cursor: 'pointer',
+                  color: ledgerRiskFilter === 'high' ? '#ef4444' : '#64748b', fontSize: 10,
+                  fontFamily: 'inherit', letterSpacing: '0.1em', display: 'flex', alignItems: 'center', gap: 5
+                }}>
+                <Filter size={12} />
+                {ledgerRiskFilter === 'high' ? 'FLAGGED PARTIES ONLY' : 'ALL TRANSACTIONS'}
+              </button>
+
+              <div style={{ fontSize: 10, color: '#475569', letterSpacing: '0.1em', marginLeft: 'auto' }}>
+                {ledgerTxns.length} of {transactions.length} TRANSACTIONS
+              </div>
+            </div>
+
+            {/* Table header */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1.1fr 1fr 1fr 0.7fr 0.9fr 1fr',
+              gap: 8, padding: '8px 12px', fontSize: 9, letterSpacing: '0.15em',
+              textTransform: 'uppercase', color: '#475569', borderBottom: '1px solid #1c2330'
+            }}>
+              <div>Transaction</div>
+              <div>From</div>
+              <div>To</div>
+              <SortableHeader label="Amount" active={ledgerSort.key === 'amount'} dir={ledgerSort.dir} onClick={() => toggleLedgerSort('amount')} />
+              <SortableHeader label="Risk" active={ledgerSort.key === 'risk'} dir={ledgerSort.dir} onClick={() => toggleLedgerSort('risk')} />
+              <SortableHeader label="Timestamp" active={ledgerSort.key === 'timestamp'} dir={ledgerSort.dir} onClick={() => toggleLedgerSort('timestamp')} />
+            </div>
+
+            {/* Rows */}
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {ledgerTxns.length === 0 && (
+                <div style={{ padding: '40px 0', textAlign: 'center', fontSize: 12, color: '#334155' }}>
+                  No transactions match your filters.
+                </div>
+              )}
+              {ledgerTxns.slice(0, 300).map(t => (
+                <div key={t.id}
+                  style={{
+                    display: 'grid', gridTemplateColumns: '1.1fr 1fr 1fr 0.7fr 0.9fr 1fr',
+                    gap: 8, padding: '10px 12px', fontSize: 11.5, alignItems: 'center',
+                    borderBottom: '1px solid #11161f'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.025)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'none'}>
+                  <div style={{ color: '#64748b', fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.id}</div>
+                  <div onClick={() => setSelectedId(t.from)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <ArrowUpRight size={11} style={{ color: '#ef4444', flexShrink: 0 }} />
+                    <span style={{ color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t.fromAcc ? t.fromAcc.name : t.from}
+                    </span>
+                  </div>
+                  <div onClick={() => setSelectedId(t.to)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                    <ArrowDownLeft size={11} style={{ color: '#2dd36f', flexShrink: 0 }} />
+                    <span style={{ color: '#cbd5e1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {t.toAcc ? t.toAcc.name : t.to}
+                    </span>
+                  </div>
+                  <div style={{ color: '#e6edf3', fontWeight: 600 }}>{fmtMoney(t.amount)}</div>
+                  <div>
+                    {t.maxRisk > 0 ? <RiskBadge score={t.maxRisk} /> : <span style={{ color: '#334155', fontSize: 10 }}>—</span>}
+                  </div>
+                  <div style={{ color: '#475569', fontSize: 10.5 }}>{fmtDate(t.timestamp)}</div>
+                </div>
+              ))}
+              {ledgerTxns.length > 300 && (
+                <div style={{ padding: '14px 0', textAlign: 'center', fontSize: 10, color: '#334155', letterSpacing: '0.1em' }}>
+                  SHOWING FIRST 300 OF {ledgerTxns.length} — REFINE SEARCH TO NARROW
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* SIDE PANEL */}
         {selectedAccount && (
           <div style={{
@@ -769,6 +906,17 @@ export default function FinancialCrimeDashboard() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function SortableHeader({ label, active, dir, onClick }) {
+  return (
+    <div onClick={onClick} style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', color: active ? '#f0b429' : '#475569' }}>
+      {label}
+      {active
+        ? (dir === 'asc' ? <ArrowUp size={10} /> : <ArrowDown size={10} />)
+        : <ArrowUpDown size={10} style={{ opacity: 0.4 }} />}
     </div>
   );
 }
