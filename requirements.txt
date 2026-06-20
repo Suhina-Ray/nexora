@@ -1,0 +1,7 @@
+flask
+flask-cors
+networkx
+scikit-learn
+numpy
+faker
+gunicorn
